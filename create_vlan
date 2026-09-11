@@ -1,0 +1,13 @@
+#!/bin/bash
+
+
+# the LAN network is used to communicate between VMs and Hosts on the LAN
+if [ "$(virsh net-list --all | grep vlan)" == "" ]; then 
+    # lan.xml shall be updated with
+    # - FQDN on the machine on which it is running
+    # - unique prefix that is routable on the LAN
+    virsh net-define vlan.xml
+    virsh net-autostart vlan
+    virsh net-start vlan
+fi
+

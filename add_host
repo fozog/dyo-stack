@@ -1,0 +1,28 @@
+#!/bin/bash
+
+[ -d /etc/dnsmasq.d/libvirt-hosts ] || {
+    sudo mkdir /etc/dnsmasq.d/libvirt-hosts
+    sudo chown libvirt-dnsmasq /etc/dnsmasq.d/libvirt-hosts
+}
+
+
+FQDN="$1"
+HOST="${FQDN%%.*}"
+if [ "$FQDN" == "$HOST" ]; then
+    FQDN=$HOST.$(get_domain.py)
+fi
+
+GW="$2"
+RULE="server=/*.${FQDN}/$GW"
+if [ ! -f /etc/dnsmasq.d/libvirt-hosts/${HOST} ]; then
+    REFRESH=yes
+else
+    CURRENT="$(cat /etc/dnsmasq.d/libvirt-hosts/${HOST})"
+    [[ "$CURRENT" == "$RULE" ]] || REFRESH=yes
+fi
+
+if [ "$REFRESH" == "yes" ]; then
+    echo $RULE | sudo tee /etc/dnsmasq.d/libvirt-hosts/${HOST} > /dev/null 2>&1
+    sudo chown libvirt-dnsmasq /etc/dnsmasq.d/libvirt-hosts/${HOST}
+fi
+

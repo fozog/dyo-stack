@@ -1,0 +1,117 @@
+#!/bin/bash
+
+declare -A bridges
+declare -A prefix
+
+
+normalize_cidr() {
+  local input="$1"
+  python3 -c "
+import ipaddress
+try:
+    net = ipaddress.ip_network('$input', strict=False)
+    print(net)
+except Exception:
+    print('$input')
+"
+}
+
+update_bridge_tags() {
+  local tag="$1"
+  local bridge_list="$2"
+
+  while IFS= read -r bridge; do
+    [ -z "$bridge" ] && continue
+    if [[ "${bridges[$bridge]}" == "OS" ]]; then
+      bridges["$bridge"]="$tag"
+    else
+      echo "Error: Bridge '$bridge' was not found as an OS bridge or had an unexpected value ('${bridges[$bridge]}')." >&2
+    fi
+  done <<< "$bridge_list"
+}
+
+while IFS= read -r bridge; do
+  [ -n "$bridge" ] && bridges["$bridge"]="OS"
+done < <(ip -br link show type bridge | awk '{print $1}')
+
+
+which docker > /dev/null 2>&1
+if [ $? ]; then
+    if  sudo -n -l -- docker > /dev/null 2>&1 ; then
+	    DOCKER_BRIDGES=`sudo docker network ls --filter driver=bridge --format '{{.ID}}' | xargs -r sudo docker network inspect --format '{{if index .Options "com.docker.network.bridge.name"}}{{index .Options "com.docker.network.bridge.name"}}{{else if eq .Name "bridge"}}docker0{{else}}br-{{slice .Id 0 12}}{{end}}'`
+    else
+	echo "Lacks password-less sudo docker" >&2
+    fi
+fi
+update_bridge_tags "Docker" "$DOCKER_BRIDGES"
+
+
+if which virsh > /dev/null 2>&1; then
+    if sudo -n -l -- virsh > /dev/null 2>&1; then
+        LIBVIRT_BRIDGES=$(sudo virsh net-list --name 2>/dev/null | while read -r net; do
+            [ -n "$net" ] && sudo virsh net-dumpxml "$net" 2>/dev/null | grep -oP "<bridge name='\K[^']+"
+        done)
+    else
+        echo "Lacks password-less sudo virsh" >&2
+    fi
+fi
+update_bridge_tags "Libvirt" "$LIBVIRT_BRIDGES"
+
+if which snap > /dev/null 2>&1 && snap list lxd > /dev/null 2>&1; then
+    if sudo -n -l -- lxc network list > /dev/null 2>&1; then
+        SNAP_BRIDGES=$(sudo lxc network list --format csv -c n,t 2>/dev/null | awk -F',' '$2=="bridge"{print $1}')
+    else
+        echo "Lacks password-less sudo lxc" >&2
+    fi
+fi
+update_bridge_tags "Snap (LXD)" "$SNAP_BRIDGES"
+
+
+
+declare -A prefix
+
+for bridge in "${!bridges[@]}"; do
+  tag="${bridges[$bridge]}"
+  raw_subnet=""
+
+  case "$tag" in
+    "Docker")
+      if [ "$bridge" = "docker0" ]; then
+        raw_subnet=$(sudo docker network inspect bridge --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' 2>/dev/null)
+      else
+        net_id=$(docker network ls --filter driver=bridge --format '{{.ID}}' | xargs -r sudo docker network inspect --format '{{if eq (index .Options "com.docker.network.bridge.name") "'"$bridge"'"}}{{.ID}}{{end}}' | grep -v '^$')
+        [ -n "$net_id" ] && raw_subnet=$(sudo docker network inspect "$net_id" --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' 2>/dev/null)
+      fi
+      # Fallback to kernel interface IP if Docker inspect fails or lacks permissions
+      [ -z "$raw_subnet" ] && raw_subnet=$(ip -4 -o addr show dev "$bridge" 2>/dev/null | awk '{print $4}')
+      ;;
+    "Libvirt")
+      if which virsh > /dev/null 2>&1 && sudo -n -l -- virsh > /dev/null 2>&1; then
+        for net in $(sudo virsh net-list --name 2>/dev/null); do
+          bname=$(sudo virsh net-dumpxml "$net" 2>/dev/null | grep -oP "<bridge name='\K[^']+")
+          if [ "$bname" = "$bridge" ]; then
+            ip_addr=$(sudo virsh net-dumpxml "$net" 2>/dev/null | grep -oP "<ip address='\K[^']+")
+            netmask=$(sudo virsh net-dumpxml "$net" 2>/dev/null | grep -oP "netmask='\K[^']+")
+            [ -n "$ip_addr" ] && raw_subnet="$ip_addr/24" # Adjust netmask conversion if needed
+            break
+          fi
+        done
+      fi
+      ;;
+    "Snap (LXD)")
+      raw_subnet=$(sudo lxc network get "$bridge" ipv4.address 2>/dev/null)
+      ;;
+    *)
+      raw_subnet=$(ip -4 -o addr show dev "$bridge" 2>/dev/null | awk '{print $4}')
+      ;;
+  esac
+
+  if [ -n "$raw_subnet" ]; then
+    prefix["$bridge"]=$(normalize_cidr "$raw_subnet")
+  fi
+done
+
+
+for bridge in "${!bridges[@]}"; do
+  echo "$bridge : ${bridges[$bridge]} : ${prefix[$bridge]}"
+done
