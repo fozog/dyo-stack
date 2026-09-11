@@ -10,6 +10,7 @@ I needed a full fledged DHCP server with control of options to support PXE polic
 
 Because ISP Box DHCP and DNS do not provide flexibility to decorate DHCP response with the right options and is not helpful in observing behaviors, I use a dedicated gateway. 
 
+```
                          [ WAN / Internet ]
                                   |
                        +---------------------+
@@ -29,7 +30,7 @@ Because ISP Box DHCP and DNS do not provide flexibility to decorate DHCP respons
 | Server 1              | | Server 2              | | Client Machine        |
 |                       | |                       | |                       |
 +-------+-------+-------+ +-------+-------+-------+ +-----------+-----------+
-
+```
 Many servers, including the gateway run VMs or containers. Each VM/Container amy need to have access to internet and I wanted a simple way to communicate with them directly.
 
 I don't want to run OpenStack or Kubernetes or use network overlays so I designed a simple naming (DNS) and routing (RIP) environement to reach VM<x>.host<y>.home.arpa.
@@ -43,7 +44,7 @@ It shall be possible from anywhere (server, client, vm) to communicate with any 
 - vm1.server1.home.arpa, vm2.server1.home.arpa
 - vm3.server2.home.arpa, vm4.server2.home.arpa
 - vm1.mbp.home.arpa
-
+```
                          [ WAN / Internet ]
                                   |
                        +---------------------+
@@ -68,7 +69,7 @@ It shall be possible from anywhere (server, client, vm) to communicate with any 
    +----+---+ +-----+---+      +----+---+ +-----+---+        +----+---+
    |  VM1   | |  VM2    |      |  VM3   | |  VM4    |        |  VM1   |
    +--------+ +---------+      +--------+ +---------+        +--------+
-
+```
 Even if I have some Windows machines I just consider Linux and macOS systems.
 
 macOS do not support any routing client, so I have to use RIPv2 as the global routing procol: I can code a crude Python RIPv2 "router".
